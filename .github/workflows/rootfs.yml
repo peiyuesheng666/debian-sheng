@@ -92,6 +92,18 @@ on:
         required: false
         default: 'sm8550.config'
 
+      firmware_repo:
+        description: 'Firmware Repo URL'
+        type: string
+        required: false
+        default: 'https://github.com/ianchb/sheng-firmware'
+
+      firmware_branch:
+        description: 'Firmware Branch'
+        type: string
+        required: false
+        default: 'master'
+
 # ============================================================================
 # Build Jobs — each produces one .deb, uploaded as an artifact
 # ============================================================================
@@ -739,7 +751,10 @@ jobs:
 
       - name: "Package firmware-xiaomi-sheng"
         run: |
-          git clone --depth 1 https://github.com/map220v/sheng-firmware firmware-src
+          git clone --depth 1 \
+            --branch "${{ inputs.firmware_branch }}" \
+            "${{ inputs.firmware_repo }}" \
+            firmware-src
           mkdir -p firmware-xiaomi-sheng/usr/lib/firmware
           cp -r firmware-src/* firmware-xiaomi-sheng/usr/lib/firmware/
           rm -rf firmware-src
