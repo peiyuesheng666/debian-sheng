@@ -20,9 +20,14 @@ on:
         type: choice
         options:
           - GNOME
-          - KDE
+          - KDE Plasma
           - server
-        default: 'KDE'
+        default: 'KDE Plasma'
+
+      plasma_mobile:
+        description: 'Enable Plasma Mobile instead of Plasma Desktop'
+        type: boolean
+        default: false
 
       autologin:
         description: 'Autologin'
@@ -1005,22 +1010,27 @@ jobs:
           echo "✓ GNOME installed"
 
       - name: "Install KDE Plasma"
-        if: ${{ inputs.desktop == 'KDE' }}
+        if: ${{ inputs.desktop == 'KDE Plasma' }}
         run: |
           sudo chroot "$ROOTFS_MOUNT" apt-get update
+          if [[ "${{ inputs.plasma_mobile }}" == "true" ]]; then
+            PLASMA_PACKAGE="plasma-mobile"
+          else
+            PLASMA_PACKAGE="plasma-desktop"
+          fi
           sudo chroot "$ROOTFS_MOUNT" apt-get install -y \
-            plasma-desktop plasma-workspace plasma-nm \
+            "$PLASMA_PACKAGE" plasma-workspace plasma-nm \
             sddm konsole firefox-esr \
             dolphin kate
           echo "✓ KDE Plasma installed"
 
-      - name: "Install KDE Plymouth Settings"
-        if: ${{ inputs.desktop == 'KDE' && steps.partition.outputs.quiet_boot_enabled == 'true' }}
+      - name: "Install KDE Plasma Plymouth Settings"
+        if: ${{ inputs.desktop == 'KDE Plasma' && steps.partition.outputs.quiet_boot_enabled == 'true' }}
         run: |
           sudo chroot "$ROOTFS_MOUNT" apt-get update
           sudo chroot "$ROOTFS_MOUNT" apt-get install -y \
             kde-config-plymouth plymouth-theme-breeze
-          echo "✓ KDE Plymouth settings installed"
+          echo "✓ KDE Plasma Plymouth settings installed"
 
       - name: "Configure GDM"
         if: ${{ inputs.desktop == 'GNOME' && (!inputs.autologin) }}
@@ -1030,7 +1040,7 @@ jobs:
           echo "✓ GDM enabled (manual login)"
 
       - name: "Configure SDDM"
-        if: ${{ inputs.desktop == 'KDE' && (!inputs.autologin) }}
+        if: ${{ inputs.desktop == 'KDE Plasma' && (!inputs.autologin) }}
         run: |
           sudo chroot "$ROOTFS_MOUNT" systemctl enable sddm
           sudo chroot "$ROOTFS_MOUNT" systemctl set-default graphical.target
@@ -1050,13 +1060,18 @@ jobs:
           echo "✓ GDM autologin configured for ${{ inputs.username }}"
 
       - name: "Configure SDDM with Autologin"
-        if: ${{ inputs.desktop == 'KDE' && inputs.autologin }}
+        if: ${{ inputs.desktop == 'KDE Plasma' && inputs.autologin }}
         run: |
+          if [[ "${{ inputs.plasma_mobile }}" == "true" ]]; then
+            SDDM_SESSION="plasma-mobile"
+          else
+            SDDM_SESSION="plasma"
+          fi
           sudo mkdir -p "$ROOTFS_MOUNT/etc/sddm.conf.d"
           sudo tee "$ROOTFS_MOUNT/etc/sddm.conf.d/autologin.conf" << EOF
           [Autologin]
           User=${{ inputs.username }}
-          Session=plasma
+          Session=$SDDM_SESSION
           EOF
           sudo chroot "$ROOTFS_MOUNT" systemctl enable sddm
           sudo chroot "$ROOTFS_MOUNT" systemctl set-default graphical.target

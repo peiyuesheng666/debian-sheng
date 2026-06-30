@@ -55,7 +55,8 @@ When you trigger the **Build RootFS** workflow via `workflow_dispatch`, the foll
 | Parameter | Description | Options | Default |
 |-----------|-------------|---------|---------|
 | **Debian Version** | Debian version to install (Trixie = Debian 13, Forky = Debian 14) | `trixie` / `forky` | `trixie` |
-| **Desktop Environment** | Preinstalled desktop environment. Select `server` for a headless (no GUI) system. | `GNOME` / `KDE` / `server` | `KDE` |
+| **Desktop Environment** | Preinstalled desktop environment. Select `server` for a headless (no GUI) system. | `GNOME` / `KDE Plasma` / `server` | `KDE Plasma` |
+| **Plasma Mobile** | Install `plasma-mobile` instead of `plasma-desktop` when Desktop Environment is `KDE Plasma`. | `true` / `false` | `false` |
 | **Autologin** | Whether the created user should be logged in automatically. | `true` / `false` | `true` |
 | **Username** | Username for the non-root user. | string | `username` |
 | **Password** | Password for both the user and `root`. | string | `password` |
