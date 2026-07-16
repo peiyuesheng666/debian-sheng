@@ -840,6 +840,44 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
+      - name: "Download xiaomi-sheng-thp"
+        run: |
+          LATEST_TAG=$(gh release list --repo ianchb/xiaomi-sheng-thp --limit 1 --json tagName -q '.[0].tagName')
+          gh release download "$LATEST_TAG" \
+            --repo ianchb/xiaomi-sheng-thp \
+            --pattern "*.deb" \
+            --clobber
+          echo "✓ xiaomi-sheng-thp.deb downloaded"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Upload xiaomi-sheng-thp"
+        uses: actions/upload-artifact@v7
+        with:
+          name: xiaomi-sheng-thp-deb
+          path: xiaomi-sheng-thp*.deb
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: "Download xiaomi-pen-status"
+        run: |
+          LATEST_TAG=$(gh release list --repo ianchb/xiaomi-pen-status --limit 1 --json tagName -q '.[0].tagName')
+          gh release download "$LATEST_TAG" \
+            --repo ianchb/xiaomi-pen-status \
+            --pattern "*.deb" \
+            --clobber
+          echo "✓ xiaomi-pen-status.deb downloaded"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Upload xiaomi-pen-status"
+        uses: actions/upload-artifact@v7
+        with:
+          name: xiaomi-pen-status-deb
+          path: xiaomi-pen-status*.deb
+          retention-days: 3
+          if-no-files-found: error
+
       # ----------------------------------------------------------------
       # Create Image
       # ----------------------------------------------------------------
