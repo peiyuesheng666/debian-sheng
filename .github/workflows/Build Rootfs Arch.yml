@@ -1,6 +1,6 @@
 # ============================================================================
 # 🐧 Build RootFS for Xiaomi Pad 6s Pro (Sheng) – Arch Linux ARM
-# 使用官方源 + 多镜像重试，确保基础系统下载成功
+# 使用官方源 + 备用国内镜像 + 挂载冲突修复
 # ============================================================================
 
 name: Build RootFS (Arch Linux)
@@ -750,29 +750,44 @@ jobs:
           sudo tar -xzf ArchLinuxARM-aarch64-latest.tar.gz -C "$ROOTFS_MOUNT"
           echo "✓ Base system extracted"
 
+      # ----------------------------------------------------------------
+      # 关键修复：挂载前先清理残留，避免冲突
+      # ----------------------------------------------------------------
       - name: "Mount Virtual File Systems and set DNS"
         run: |
+          # === 强制卸载所有可能残留的挂载点 ===
+          sudo umount "$ROOTFS_MOUNT/dev/pts" 2>/dev/null || true
+          sudo umount "$ROOTFS_MOUNT/dev" 2>/dev/null || true
+          sudo umount "$ROOTFS_MOUNT/proc" 2>/dev/null || true
+          sudo umount "$ROOTFS_MOUNT/sys" 2>/dev/null || true
+
+          # 重新挂载
           sudo mount --bind /dev "$ROOTFS_MOUNT/dev"
           sudo mount --bind /dev/pts "$ROOTFS_MOUNT/dev/pts"
           sudo mount -t proc proc "$ROOTFS_MOUNT/proc"
           sudo mount -t sysfs sys "$ROOTFS_MOUNT/sys"
-          # 强制使用公共 DNS（避免 systemd-resolved 127.0.0.53 问题）
+
+          # 强制 DNS（使用公共 DNS）
           echo "nameserver 8.8.8.8" | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf"
           echo "nameserver 1.1.1.1" | sudo tee -a "$ROOTFS_MOUNT/etc/resolv.conf"
           echo "✓ Virtual file systems mounted and DNS set"
 
       # ----------------------------------------------------------------
       # Install core packages and configure system
+      # 镜像源：优先官方源（国外快），备用中科大、清华
       # ----------------------------------------------------------------
       - name: "Initialize pacman and install base packages"
         run: |
-          # 设置中科大镜像源（也可改为官方，但国内访问慢）
+          # 写入 mirrorlist：官方源 + 国内备用
           sudo tee "$ROOTFS_MOUNT/etc/pacman.d/mirrorlist" << 'EOF'
-          ## 中国科学技术大学镜像
+          ## Arch Linux ARM 官方源
+          Server = http://mirror.archlinuxarm.org/$arch/$repo
+          ## 备用国内镜像
           Server = https://mirrors.ustc.edu.cn/archlinuxarm/$arch/$repo
+          Server = https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/$arch/$repo
           EOF
 
-          # 测试网络（调试用）
+          # 测试网络（仅调试，失败不中断）
           echo "=== Testing network connectivity ==="
           sudo arch-chroot "$ROOTFS_MOUNT" ping -c 1 8.8.8.8 || echo "Ping failed, but continuing..."
 
