@@ -1,13 +1,18 @@
 # ============================================================================
-# 🐧 Build RootFS for Xiaomi Pad 6s Pro (Sheng) – Arch Linux ARM
-# 使用官方源 + 备用国内镜像 + 挂载冲突修复
+# 🐧 Build Arch Linux ARM RootFS for Xiaomi Pad 6s Pro (Sheng)
 # ============================================================================
 
-name: Build RootFS (Arch Linux)
+name: Build RootFS (Arch)
 
 on:
   workflow_dispatch:
     inputs:
+      arch_mirror:
+        description: 'Arch Linux ARM mirror'
+        type: string
+        required: false
+        default: 'http://mirror.archlinuxarm.org'
+
       desktop:
         description: 'Desktop Environment (server = no DE)'
         type: choice
@@ -103,18 +108,17 @@ on:
         default: 'master'
 
 # ============================================================================
-# Build Jobs
+# Build Jobs — each produces an archive (tar.gz), uploaded as artifact
 # ============================================================================
 
 jobs:
-  # --------------------------------------------------------------------------
-  # Kernel (optional custom build)
-  # --------------------------------------------------------------------------
+  # ==========================================================================
+  # Kernel (conditional on custom_build) – unchanged except packaging
+  # ==========================================================================
   build-kernel:
     name: "Build Kernel"
     runs-on: ubuntu-24.04-arm
-    outputs:
-      kernel_version: ${{ steps.build.outputs.kernel_version }}
+
     steps:
       - name: "Skip (Prebuilt Kernel)"
         if: ${{ inputs.kernel_source != 'custom_build' }}
@@ -182,19 +186,19 @@ jobs:
           echo "  Kernel version: $KVER"
 
           make -j$(nproc) ARCH=arm64 LLVM=1 \
-            INSTALL_MOD_PATH="${{ github.workspace }}/kernel-install" \
+            INSTALL_MOD_PATH="${{ github.workspace }}/linux-xiaomi-sheng" \
             modules_install
-          rm -rf "${{ github.workspace }}/kernel-install/lib/modules/"*"/build" || true
+          rm -rf "${{ github.workspace }}/linux-xiaomi-sheng/lib/modules/"*"/build" || true
 
-          mkdir -p "${{ github.workspace }}/kernel-install/boot"
+          mkdir -p "${{ github.workspace }}/linux-xiaomi-sheng/boot"
           install -Dm644 arch/arm64/boot/Image.gz \
-            "${{ github.workspace }}/kernel-install/boot/Image.gz"
+            "${{ github.workspace }}/linux-xiaomi-sheng/boot/Image.gz"
           install -Dm644 arch/arm64/boot/dts/qcom/sm8550-xiaomi-sheng.dtb \
-            "${{ github.workspace }}/kernel-install/boot/sm8550-xiaomi-sheng.dtb"
+            "${{ github.workspace }}/linux-xiaomi-sheng/boot/sm8550-xiaomi-sheng.dtb"
           install -Dm644 .config \
-            "${{ github.workspace }}/kernel-install/boot/config-${KVER}"
+            "${{ github.workspace }}/linux-xiaomi-sheng/boot/config-${KVER}"
           install -Dm644 System.map \
-            "${{ github.workspace }}/kernel-install/boot/System.map-${KVER}"
+            "${{ github.workspace }}/linux-xiaomi-sheng/boot/System.map-${KVER}"
 
           cat arch/arm64/boot/Image.gz \
               arch/arm64/boot/dts/qcom/sm8550-xiaomi-sheng.dtb \
@@ -204,18 +208,20 @@ jobs:
           ccache --show-stats --verbose | grep -E "(hit rate|cache hit|cache miss|max size)" || true
           echo "✓ Kernel build complete"
 
-      - name: "Package Kernel (tar.xz)"
+      - name: "Package Kernel as tar.gz"
         if: ${{ inputs.kernel_source == 'custom_build' }}
         run: |
-          tar -cJf kernel.tar.xz -C kernel-install boot lib
-          echo "✓ kernel.tar.xz created"
+          KVER="${{ steps.build.outputs.kernel_version }}"
+          cd "${{ github.workspace }}"
+          tar czf linux-xiaomi-sheng-${KVER}.tar.gz linux-xiaomi-sheng
+          echo "✓ linux-xiaomi-sheng-${KVER}.tar.gz packaged"
 
       - name: "Upload Kernel Package"
         if: ${{ inputs.kernel_source == 'custom_build' }}
         uses: actions/upload-artifact@v7
         with:
-          name: kernel-custom-archive
-          path: kernel.tar.xz
+          name: kernel-custom-pkg
+          path: linux-xiaomi-sheng-*.tar.gz
           retention-days: 3
           if-no-files-found: error
 
@@ -228,12 +234,13 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-  # --------------------------------------------------------------------------
-  # fastrpc
-  # --------------------------------------------------------------------------
+  # ==========================================================================
+  # fastrpc – Qualcomm FastRPC userspace (archive instead of deb)
+  # ==========================================================================
   build-fastrpc:
     name: "Build fastrpc"
     runs-on: ubuntu-24.04-arm
+
     steps:
       - name: "Checkout Repo"
         uses: actions/checkout@v7
@@ -243,7 +250,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential autoconf automake libtool pkg-config \
-            git wget unzip dpkg-dev libyaml-dev linux-libc-dev
+            git wget unzip libyaml-dev linux-libc-dev
           echo "✓ Build tools installed"
 
       - name: "Download Source"
@@ -268,27 +275,28 @@ jobs:
           cp patches/adsprpcd-sensorspd.service fastrpc-1.0.2/stage/usr/lib/systemd/system/
           echo "✓ systemd service added"
 
-      - name: "Package fastrpc (tar.xz)"
+      - name: "Package fastrpc as tar.gz"
         run: |
-          cd fastrpc-1.0.2/stage
-          tar -cJf ../../fastrpc.tar.xz usr
-          cd ../..
-          echo "✓ fastrpc.tar.xz created"
+          cd fastrpc-1.0.2
+          tar czf fastrpc.tar.gz -C stage usr
+          mv fastrpc.tar.gz "${{ github.workspace }}/"
+          echo "✓ fastrpc.tar.gz created"
 
       - name: "Upload fastrpc"
         uses: actions/upload-artifact@v7
         with:
-          name: fastrpc-archive
-          path: fastrpc.tar.xz
+          name: fastrpc-pkg
+          path: fastrpc.tar.gz
           retention-days: 3
           if-no-files-found: error
 
-  # --------------------------------------------------------------------------
-  # libssc
-  # --------------------------------------------------------------------------
+  # ==========================================================================
+  # libssc – Qualcomm Sensor Core userspace (archive)
+  # ==========================================================================
   build-libssc:
     name: "Build libssc"
     runs-on: ubuntu-24.04-arm
+
     steps:
       - name: "Checkout Repo"
         uses: actions/checkout@v7
@@ -323,24 +331,24 @@ jobs:
           DESTDIR=$PWD/stage meson install -C build
           echo "✓ libssc built"
 
-      - name: "Package libssc (tar.xz)"
+      - name: "Package libssc as tar.gz"
         run: |
-          cd source/stage
-          tar -cJf ../../libssc.tar.xz usr
-          cd ../..
-          echo "✓ libssc.tar.xz created"
+          cd source
+          tar czf libssc.tar.gz -C stage usr
+          mv libssc.tar.gz "${{ github.workspace }}/"
+          echo "✓ libssc.tar.gz created"
 
       - name: "Upload libssc"
         uses: actions/upload-artifact@v7
         with:
-          name: libssc-archive
-          path: libssc.tar.xz
+          name: libssc-pkg
+          path: libssc.tar.gz
           retention-days: 3
           if-no-files-found: error
 
-  # --------------------------------------------------------------------------
-  # iio-sensor-proxy
-  # --------------------------------------------------------------------------
+  # ==========================================================================
+  # iio-sensor-proxy – patched with Qualcomm SSC support (needs libssc)
+  # ==========================================================================
   build-iio-sensor-proxy:
     name: "Build iio-sensor-proxy"
     runs-on: ubuntu-24.04-arm
@@ -351,7 +359,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential ninja-build pkg-config git wget dpkg-dev \
+            build-essential ninja-build pkg-config git wget \
             python3-pip libglib2.0-dev libgudev-1.0-dev \
             libpolkit-gobject-1-dev libsystemd-dev libdbus-1-dev \
             systemd libqmi-glib-dev libmbim-glib-dev \
@@ -362,11 +370,11 @@ jobs:
       - name: "Download libssc"
         uses: actions/download-artifact@v8
         with:
-          name: libssc-archive
+          name: libssc-pkg
 
-      - name: "Install libssc (temporary)"
+      - name: "Install libssc from tar.gz"
         run: |
-          sudo tar -xJf libssc.tar.xz -C /
+          sudo tar xf libssc.tar.gz -C /usr/local
           sudo ldconfig
           echo "✓ libssc installed"
 
@@ -388,51 +396,57 @@ jobs:
           DESTDIR=$PWD/stage meson install --no-rebuild -C output
           echo "✓ iio-sensor-proxy built"
 
-      - name: "Package iio-sensor-proxy (tar.xz)"
+      - name: "Package iio-sensor-proxy as tar.gz"
         run: |
-          cd iio-sensor-proxy-3.9/stage
-          tar -cJf ../../iio-sensor-proxy.tar.xz usr
-          cd ../..
-          echo "✓ iio-sensor-proxy.tar.xz created"
+          cd iio-sensor-proxy-3.9
+          tar czf iio-sensor-proxy.tar.gz -C stage usr
+          mv iio-sensor-proxy.tar.gz "${{ github.workspace }}/"
+          echo "✓ iio-sensor-proxy.tar.gz created"
 
       - name: "Upload iio-sensor-proxy"
         uses: actions/upload-artifact@v7
         with:
-          name: iio-sensor-proxy-archive
-          path: iio-sensor-proxy.tar.xz
+          name: iio-sensor-proxy-pkg
+          path: iio-sensor-proxy.tar.gz
           retention-days: 3
           if-no-files-found: error
 
-  # --------------------------------------------------------------------------
-  # sheng-sensors (config files)
-  # --------------------------------------------------------------------------
+  # ==========================================================================
+  # sheng-sensors – proprietary sensor config files (archive)
+  # ==========================================================================
   build-sheng-sensors:
     name: "Build sheng-sensors"
     runs-on: ubuntu-24.04-arm
+
     steps:
       - name: "Checkout Repo"
         uses: actions/checkout@v7
 
-      - name: "Package sheng-sensors (tar.xz)"
+      - name: "Package sheng-sensors as tar.gz"
         run: |
-          cp -r sheng-sensors-files/usr .
-          tar -cJf sheng-sensors.tar.xz usr
-          echo "✓ sheng-sensors.tar.xz created"
+          if [ -d sheng-sensors-files/usr ]; then
+            tar czf sheng-sensors.tar.gz -C sheng-sensors-files usr
+          else
+            echo "Error: sheng-sensors-files/usr not found"
+            exit 1
+          fi
+          echo "✓ sheng-sensors.tar.gz created"
 
       - name: "Upload sheng-sensors"
         uses: actions/upload-artifact@v7
         with:
-          name: sheng-sensors-archive
-          path: sheng-sensors.tar.xz
+          name: sheng-sensors-pkg
+          path: sheng-sensors.tar.gz
           retention-days: 3
           if-no-files-found: error
 
-  # --------------------------------------------------------------------------
-  # sheng-devauth
-  # --------------------------------------------------------------------------
+  # ==========================================================================
+  # sheng-devauth – keyboard authentication daemon (archive)
+  # ==========================================================================
   build-sheng-devauth:
     name: "Build sheng-devauth"
     runs-on: ubuntu-24.04-arm
+
     steps:
       - name: "Checkout Repo"
         uses: actions/checkout@v7
@@ -440,7 +454,7 @@ jobs:
       - name: "Install Build Tools"
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential dpkg-dev git
+          sudo apt-get install -y build-essential git
           echo "✓ Build tools installed"
 
       - name: "Clone Source"
@@ -454,27 +468,27 @@ jobs:
           make
           echo "✓ Binary built"
 
-      - name: "Package sheng-devauth (tar.xz)"
+      - name: "Package sheng-devauth as tar.gz"
         run: |
-          mkdir -p usr/bin
-          cp source/xiaomi_devauth usr/bin/
-          chmod 0755 usr/bin/xiaomi_devauth
-          tar -cJf sheng-devauth.tar.xz usr
-          echo "✓ sheng-devauth.tar.xz created"
+          mkdir -p pkg/usr/bin
+          chmod 0755 source/xiaomi_devauth
+          cp source/xiaomi_devauth pkg/usr/bin/
+          tar czf sheng-devauth.tar.gz -C pkg usr
+          echo "✓ sheng-devauth.tar.gz created"
 
       - name: "Upload sheng-devauth"
         uses: actions/upload-artifact@v7
         with:
-          name: sheng-devauth-archive
-          path: sheng-devauth.tar.xz
+          name: sheng-devauth-pkg
+          path: sheng-devauth.tar.gz
           retention-days: 3
           if-no-files-found: error
 
-  # --------------------------------------------------------------------------
-  # RootFS Assembly
-  # --------------------------------------------------------------------------
+  # ==========================================================================
+  # RootFS Assembly – pacstrap + custom archives
+  # ==========================================================================
   build-rootfs:
-    name: "Build RootFS"
+    name: "Build Arch RootFS"
     runs-on: ubuntu-24.04-arm
     needs:
       - build-kernel
@@ -490,7 +504,6 @@ jobs:
     env:
       ROOTFS_MOUNT: /mnt/rootfs
       IMAGE_SIZE: 10G
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       # ----------------------------------------------------------------
@@ -500,7 +513,12 @@ jobs:
         uses: actions/checkout@v7
 
       - name: "Verify Arguments"
+        env:
+          ROOTFS_PASSWORD: ${{ secrets.ROOTFS_PASSWORD }}
         run: |
+          if [[ -z "$ROOTFS_PASSWORD" ]]; then
+            echo "::warning::ROOTFS_PASSWORD is not set; the image will use the default password 'password'."
+          fi
           if [[ "${{ inputs.boot_mode }}" == "custom" ]]; then
             if [[ "${{ inputs.kernel_source }}" != "custom_build" ]]; then
               echo "Error: Custom partition requires custom_build kernel"
@@ -547,169 +565,133 @@ jobs:
           echo "✓ Partition label set"
 
       # ----------------------------------------------------------------
-      # Install Tools
+      # Install host tools (docker + dpkg for deb extraction)
       # ----------------------------------------------------------------
-      - name: "Install Build Tools"
+      - name: "Install Host Tools"
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            debootstrap git curl \
-            qemu-user-static binfmt-support \
-            arch-install-scripts
-          echo "✓ Build tools installed"
+          sudo apt-get install -y docker.io git curl dpkg-dev
+          sudo systemctl start docker
+          sudo docker pull archlinux:latest
+          echo "✓ Docker ready"
 
       # ----------------------------------------------------------------
-      # Acquire Kernel (prebuilt or custom)
+      # Acquire Kernel
       # ----------------------------------------------------------------
-      - name: "[Prebuilt] Download Kernel .deb"
+      - name: "[Prebuilt] Download Kernel"
         if: ${{ inputs.kernel_source != 'custom_build' }}
         run: |
           LATEST_TAG=$(gh release list --repo ianchb/sm8550-mainline --limit 1 --json tagName -q '.[0].tagName')
           echo "  Latest tag: $LATEST_TAG"
-          gh release download "$LATEST_TAG" \
-            --repo ianchb/sm8550-mainline \
-            --pattern "linux-xiaomi-sheng*.deb" \
-            --clobber
-          echo "✓ Prebuilt kernel .deb downloaded"
-
-      - name: "[Prebuilt] Extract Kernel from .deb"
-        if: ${{ inputs.kernel_source != 'custom_build' }}
-        run: |
-          mkdir kernel-extract
-          dpkg -x linux-xiaomi-sheng*.deb kernel-extract
-          tar -cJf kernel.tar.xz -C kernel-extract boot lib
-          echo "✓ Kernel extracted and repacked"
-
-      - name: "[Custom] Download Kernel Archive"
-        if: ${{ inputs.kernel_source == 'custom_build' }}
-        uses: actions/download-artifact@v8
-        with:
-          name: kernel-custom-archive
-          path: .
-
-      - name: "[Custom] Download Kernel Image"
-        if: ${{ inputs.kernel_source == 'custom_build' }}
-        uses: actions/download-artifact@v8
-        with:
-          name: kernel-custom-image
-          path: .
-
-      - name: "[Prebuilt] Download Boot Image"
-        if: ${{ inputs.kernel_source != 'custom_build' }}
-        run: |
-          LATEST_TAG=$(gh release list --repo ianchb/sm8550-mainline --limit 1 --json tagName -q '.[0].tagName')
           BOOT_PATTERN="${{ steps.partition.outputs.boot_img_pattern }}"
           gh release download "$LATEST_TAG" \
             --repo ianchb/sm8550-mainline \
             --pattern "$BOOT_PATTERN" \
             --clobber
           mv "$BOOT_PATTERN" boot.img
-          echo "✓ Boot image downloaded"
+          gh release download "$LATEST_TAG" \
+            --repo ianchb/sm8550-mainline \
+            --pattern "linux-xiaomi-sheng*.deb" \
+            --clobber
+          # extract deb for later use
+          mkdir -p kernel-deb
+          dpkg-deb -x linux-xiaomi-sheng*.deb kernel-deb/
+          echo "✓ Prebuilt kernel downloaded & extracted"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "[Custom] Download Kernel Package"
+        if: ${{ inputs.kernel_source == 'custom_build' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: kernel-custom-pkg
+
+      - name: "[Custom] Download Kernel Image"
+        if: ${{ inputs.kernel_source == 'custom_build' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: kernel-custom-image
 
       # ----------------------------------------------------------------
-      # Download Custom Component Archives (from previous jobs)
+      # Download build artifacts (tar.gz)
       # ----------------------------------------------------------------
       - name: "Download fastrpc"
         uses: actions/download-artifact@v8
         with:
-          name: fastrpc-archive
+          name: fastrpc-pkg
 
       - name: "Download libssc"
         uses: actions/download-artifact@v8
         with:
-          name: libssc-archive
+          name: libssc-pkg
 
       - name: "Download iio-sensor-proxy"
         uses: actions/download-artifact@v8
         with:
-          name: iio-sensor-proxy-archive
+          name: iio-sensor-proxy-pkg
 
       - name: "Download sheng-sensors"
         uses: actions/download-artifact@v8
         with:
-          name: sheng-sensors-archive
+          name: sheng-sensors-pkg
 
       - name: "Download sheng-devauth"
         uses: actions/download-artifact@v8
         with:
-          name: sheng-devauth-archive
+          name: sheng-devauth-pkg
 
       # ----------------------------------------------------------------
-      # Download and extract xiaomi-* components from GitHub Releases
+      # Prepare additional packages (firmware, alsa, external debs)
       # ----------------------------------------------------------------
-      - name: "Download and extract xiaomi-mipps-auth"
-        run: |
-          LATEST_TAG=$(gh release list --repo ianchb/xiaomi-mipps-auth --limit 1 --json tagName -q '.[0].tagName')
-          gh release download "$LATEST_TAG" --repo ianchb/xiaomi-mipps-auth --pattern "*.deb" --clobber
-          mkdir -p extract-mipps-auth
-          dpkg -x xiaomi-mipps-auth*.deb extract-mipps-auth
-          tar -cJf xiaomi-mipps-auth.tar.xz -C extract-mipps-auth usr
-
-      - name: "Download and extract xiaomi-charger-mode"
-        run: |
-          LATEST_TAG=$(gh release list --repo ianchb/xiaomi-charger-mode --limit 1 --json tagName -q '.[0].tagName')
-          gh release download "$LATEST_TAG" --repo ianchb/xiaomi-charger-mode --pattern "*.deb" --clobber
-          mkdir -p extract-charger-mode
-          dpkg -x xiaomi-charger-mode*.deb extract-charger-mode
-          tar -cJf xiaomi-charger-mode.tar.xz -C extract-charger-mode usr
-
-      - name: "Download and extract xiaomi-sheng-thp"
-        run: |
-          LATEST_TAG=$(gh release list --repo ianchb/xiaomi-sheng-thp --limit 1 --json tagName -q '.[0].tagName')
-          gh release download "$LATEST_TAG" --repo ianchb/xiaomi-sheng-thp --pattern "*.deb" --clobber
-          mkdir -p extract-thp
-          dpkg -x xiaomi-sheng-thp*.deb extract-thp
-          tar -cJf xiaomi-sheng-thp.tar.xz -C extract-thp usr
-
-      - name: "Download and extract xiaomi-pen-status"
-        run: |
-          LATEST_TAG=$(gh release list --repo ianchb/xiaomi-pen-status --limit 1 --json tagName -q '.[0].tagName')
-          gh release download "$LATEST_TAG" --repo ianchb/xiaomi-pen-status --pattern "*.deb" --clobber
-          mkdir -p extract-pen-status
-          dpkg -x xiaomi-pen-status*.deb extract-pen-status
-          tar -cJf xiaomi-pen-status.tar.xz -C extract-pen-status usr
-
-      - name: "Download and extract xiaomi-sheng-fingerprint"
-        run: |
-          LATEST_TAG=$(gh release list --repo ianchb/xiaomi-sheng-fingerprint --limit 1 --json tagName -q '.[0].tagName')
-          gh release download "$LATEST_TAG" --repo ianchb/xiaomi-sheng-fingerprint --pattern "*.deb" --clobber
-          mkdir -p extract-fingerprint
-          dpkg -x xiaomi-sheng-fingerprint*.deb extract-fingerprint
-          tar -cJf xiaomi-sheng-fingerprint.tar.xz -C extract-fingerprint usr
-
-      - name: "Download and extract xiaomi-sheng-keyboard-helper"
-        run: |
-          LATEST_TAG=$(gh release list --repo ianchb/xiaomi-sheng-keyboard-helper --limit 1 --json tagName -q '.[0].tagName')
-          gh release download "$LATEST_TAG" --repo ianchb/xiaomi-sheng-keyboard-helper --pattern "*.deb" --clobber
-          mkdir -p extract-keyboard-helper
-          dpkg -x xiaomi-sheng-keyboard-helper*.deb extract-keyboard-helper
-          tar -cJf xiaomi-sheng-keyboard-helper.tar.xz -C extract-keyboard-helper usr
-
-      # ----------------------------------------------------------------
-      # Prepare ALSA and firmware (inline)
-      # ----------------------------------------------------------------
-      - name: "Package alsa-xiaomi-sheng (tar.xz)"
-        run: |
-          cp -r alsa-xiaomi-sheng/usr .
-          tar -cJf alsa-xiaomi-sheng.tar.xz usr
-          rm -rf usr
-          echo "✓ alsa-xiaomi-sheng.tar.xz created"
-
-      - name: "Package firmware-xiaomi-sheng (tar.xz)"
+      - name: "Prepare firmware-xiaomi-sheng archive"
         run: |
           git clone --depth 1 \
             --branch "${{ inputs.firmware_branch }}" \
             "${{ inputs.firmware_repo }}" \
             firmware-src
-          mkdir -p usr/lib/firmware
-          cp -r firmware-src/* usr/lib/firmware/
+          mkdir -p firmware-pkg/usr/lib/firmware
+          cp -r firmware-src/* firmware-pkg/usr/lib/firmware/
           rm -rf firmware-src
-          tar -cJf firmware-xiaomi-sheng.tar.xz usr
-          rm -rf usr
-          echo "✓ firmware-xiaomi-sheng.tar.xz created"
+          tar czf firmware-xiaomi-sheng.tar.gz -C firmware-pkg usr
+          echo "✓ firmware-xiaomi-sheng.tar.gz created"
+
+      - name: "Prepare alsa-xiaomi-sheng archive"
+        run: |
+          if [ -d alsa-xiaomi-sheng ]; then
+            tar czf alsa-xiaomi-sheng.tar.gz -C alsa-xiaomi-sheng .
+          else
+            echo "Warning: alsa-xiaomi-sheng directory not found, skipping"
+            tar czf alsa-xiaomi-sheng.tar.gz --files-from /dev/null
+          fi
+          echo "✓ alsa-xiaomi-sheng.tar.gz prepared"
+
+      - name: "Download & extract external debs"
+        run: |
+          mkdir -p external-debs
+          # Helper to download a deb from latest release
+          download_deb() {
+            REPO=$1
+            LATEST=$(gh release list --repo "$REPO" --limit 1 --json tagName -q '.[0].tagName')
+            gh release download "$LATEST" --repo "$REPO" --pattern "*.deb" --dir external-debs --clobber
+          }
+          download_deb ianchb/xiaomi-mipps-auth
+          download_deb ianchb/xiaomi-charger-mode
+          download_deb ianchb/xiaomi-sheng-thp
+          download_deb ianchb/xiaomi-pen-status
+          download_deb ianchb/xiaomi-sheng-fingerprint
+          download_deb ianchb/xiaomi-sheng-keyboard-helper
+          # Extract all debs into a single directory tree
+          mkdir -p external-root
+          for deb in external-debs/*.deb; do
+            dpkg-deb -x "$deb" external-root/
+          done
+          tar czf external-packages.tar.gz -C external-root .
+          echo "✓ External packages extracted and archived"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ----------------------------------------------------------------
-      # Create Image and Install Arch Linux ARM base
+      # Create & mount image
       # ----------------------------------------------------------------
       - name: "Create RootFS Image"
         run: |
@@ -723,202 +705,175 @@ jobs:
           sudo mount -o loop rootfs.img "$ROOTFS_MOUNT"
           echo "✓ RootFS image mounted at $ROOTFS_MOUNT"
 
-      - name: "Download Arch Linux ARM base tarball (official + mirrors)"
+      # ----------------------------------------------------------------
+      # Bootstrap Arch Linux ARM in Docker
+      # ----------------------------------------------------------------
+      - name: "Bootstrap Arch Linux ARM"
         run: |
-          # 优先使用官方源，备用国内镜像
-          MIRRORS=(
-            "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
-            "https://de3.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
-            "https://mirrors.ustc.edu.cn/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
-            "https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
-            "https://mirrors.aliyun.com/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
-          )
-          for MIRROR in "${MIRRORS[@]}"; do
-            echo "Trying to download from $MIRROR ..."
-            if wget -q --timeout=30 --tries=3 "$MIRROR"; then
-              echo "✓ Successfully downloaded from $MIRROR"
-              exit 0
-            else
-              echo "❌ Failed from $MIRROR, trying next..."
-            fi
-          done
-          echo "Error: All mirrors failed to download Arch Linux ARM tarball."
-          exit 1
-
-      - name: "Extract Arch Linux ARM base"
-        run: |
-          sudo tar -xzf ArchLinuxARM-aarch64-latest.tar.gz -C "$ROOTFS_MOUNT"
-          echo "✓ Base system extracted"
+          sudo docker run --rm --privileged \
+            -v "$ROOTFS_MOUNT":/mnt \
+            archlinux:latest \
+            bash -c "
+              pacman-key --init
+              pacman-key --populate archlinux
+              pacstrap -c /mnt base base-devel sudo vim wget curl \
+                networkmanager openssh wpa_supplicant dbus \
+                ca-certificates chrony iw lm_sensors wireless-regdb \
+                net-tools glib2 protobuf-c libqmi libmbim libyaml \
+                libgudev polkit
+            "
+          echo "✓ Pacstrap complete"
 
       # ----------------------------------------------------------------
-      # 关键修复：挂载前先清理残留，避免冲突
+      # Chroot configuration helper
       # ----------------------------------------------------------------
-      - name: "Mount Virtual File Systems and set DNS"
+      - name: "Run chroot configuration"
         run: |
-          # === 强制卸载所有可能残留的挂载点 ===
-          sudo umount "$ROOTFS_MOUNT/dev/pts" 2>/dev/null || true
-          sudo umount "$ROOTFS_MOUNT/dev" 2>/dev/null || true
-          sudo umount "$ROOTFS_MOUNT/proc" 2>/dev/null || true
-          sudo umount "$ROOTFS_MOUNT/sys" 2>/dev/null || true
+          # This step runs inside the arch container to configure the system
+          sudo docker run --rm --privileged \
+            -v "$ROOTFS_MOUNT":/mnt \
+            -e HOSTNAME="${{ inputs.hostname }}" \
+            -e USERNAME="${{ inputs.username }}" \
+            -e ROOTFS_PASSWORD="${{ secrets.ROOTFS_PASSWORD }}" \
+            -e DESKTOP="${{ inputs.desktop }}" \
+            -e PLASMA_MOBILE="${{ inputs.plasma_mobile }}" \
+            -e AUTOLOGIN="${{ inputs.autologin }}" \
+            -e QUIET_BOOT="${{ steps.partition.outputs.quiet_boot_enabled }}" \
+            archlinux:latest \
+            bash -c '
+              set -e
+              echo "==> Basic configuration"
+              echo "$HOSTNAME" > /mnt/etc/hostname
+              grep -q "127.0.1.1.*$HOSTNAME" /mnt/etc/hosts || \
+                echo "127.0.1.1 $HOSTNAME" >> /mnt/etc/hosts
 
-          # 重新挂载
-          sudo mount --bind /dev "$ROOTFS_MOUNT/dev"
-          sudo mount --bind /dev/pts "$ROOTFS_MOUNT/dev/pts"
-          sudo mount -t proc proc "$ROOTFS_MOUNT/proc"
-          sudo mount -t sysfs sys "$ROOTFS_MOUNT/sys"
-
-          # 强制 DNS（使用公共 DNS）
-          echo "nameserver 8.8.8.8" | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf"
-          echo "nameserver 1.1.1.1" | sudo tee -a "$ROOTFS_MOUNT/etc/resolv.conf"
-          echo "✓ Virtual file systems mounted and DNS set"
-
-      # ----------------------------------------------------------------
-      # Install core packages and configure system
-      # 镜像源：优先官方源（国外快），备用中科大、清华
-      # ----------------------------------------------------------------
-      - name: "Initialize pacman and install base packages"
-        run: |
-          # 写入 mirrorlist：官方源 + 国内备用
-          sudo tee "$ROOTFS_MOUNT/etc/pacman.d/mirrorlist" << 'EOF'
-          ## Arch Linux ARM 官方源
-          Server = http://mirror.archlinuxarm.org/$arch/$repo
-          ## 备用国内镜像
-          Server = https://mirrors.ustc.edu.cn/archlinuxarm/$arch/$repo
-          Server = https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/$arch/$repo
-          EOF
-
-          # 测试网络（仅调试，失败不中断）
-          echo "=== Testing network connectivity ==="
-          sudo arch-chroot "$ROOTFS_MOUNT" ping -c 1 8.8.8.8 || echo "Ping failed, but continuing..."
-
-          # 初始化 pacman
-          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --init
-          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --populate archlinuxarm
-
-          # 更新并安装基础包
-          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -Syu --noconfirm
-          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
-            base-devel networkmanager openssh sudo vim wget \
-            chrony iw wireless-regdb \
-            libglib2 libprotobuf-c libqmi-glib libmbim-glib \
-            libyaml libgudev polkit
-          echo "✓ Base packages installed"
-
-      - name: "Install GNOME"
-        if: ${{ inputs.desktop == 'GNOME' }}
-        run: |
-          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
-            gnome gnome-terminal firefox gdm
-          echo "✓ GNOME installed"
-
-      - name: "Install KDE Plasma"
-        if: ${{ inputs.desktop == 'KDE Plasma' }}
-        run: |
-          if [[ "${{ inputs.plasma_mobile }}" == "true" ]]; then
-            PLASMA_PKG="plasma-mobile"
-          else
-            PLASMA_PKG="plasma"
-          fi
-          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
-            $PLASMA_PKG plasma-nm sddm konsole firefox dolphin kate
-          echo "✓ KDE Plasma installed"
-
-      - name: "Install Plymouth (quiet boot)"
-        if: ${{ steps.partition.outputs.quiet_boot_enabled == 'true' }}
-        run: |
-          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm plymouth
-          echo "✓ Plymouth installed"
-
-      # ----------------------------------------------------------------
-      # Install custom archives into rootfs
-      # ----------------------------------------------------------------
-      - name: "Extract all custom tar.xz archives"
-        run: |
-          for f in *.tar.xz; do
-            sudo tar -xJf "$f" -C "$ROOTFS_MOUNT"
-          done
-          echo "✓ All custom archives extracted"
-
-      # ----------------------------------------------------------------
-      # Configure system
-      # ----------------------------------------------------------------
-      - name: "Enable services"
-        run: |
-          sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable NetworkManager
-          sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable sshd
-          sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable chronyd
-          sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable adsprpcd-sensorspd.service || true
-          echo "✓ Services enabled"
-
-      - name: "Set hostname"
-        run: |
-          echo "${{ inputs.hostname }}" | sudo tee "$ROOTFS_MOUNT/etc/hostname"
-          if ! grep -q "127.0.1.1.*${{ inputs.hostname }}" "$ROOTFS_MOUNT/etc/hosts"; then
-            echo "127.0.1.1 ${{ inputs.hostname }}" | sudo tee -a "$ROOTFS_MOUNT/etc/hosts"
-          fi
-          echo "✓ Hostname set to ${{ inputs.hostname }}"
-
-      - name: "Create user and set passwords"
-        env:
-          ROOTFS_PASSWORD: ${{ secrets.ROOTFS_PASSWORD }}
-        run: |
-          if [[ -z "$ROOTFS_PASSWORD" ]]; then
-            ROOTFS_PASSWORD="password"
-          else
-            echo "::add-mask::$ROOTFS_PASSWORD"
-          fi
-          sudo arch-chroot "$ROOTFS_MOUNT" useradd -m -s /bin/bash -G wheel "${{ inputs.username }}"
-          printf '%s:%s\n' "${{ inputs.username }}" "$ROOTFS_PASSWORD" | sudo arch-chroot "$ROOTFS_MOUNT" chpasswd
-          printf 'root:%s\n' "$ROOTFS_PASSWORD" | sudo arch-chroot "$ROOTFS_MOUNT" chpasswd
-          echo "%wheel ALL=(ALL) ALL" | sudo tee -a "$ROOTFS_MOUNT/etc/sudoers.d/wheel"
-          echo "✓ User created and passwords set"
-
-      - name: "Configure display manager"
-        if: ${{ inputs.desktop != 'server' }}
-        run: |
-          if [[ "${{ inputs.desktop }}" == "GNOME" ]]; then
-            DM_SERVICE="gdm"
-            if [[ "${{ inputs.autologin }}" == "true" ]]; then
-              sudo mkdir -p "$ROOTFS_MOUNT/etc/gdm"
-              sudo tee "$ROOTFS_MOUNT/etc/gdm/custom.conf" << EOF
-              [daemon]
-              AutomaticLoginEnable=true
-              AutomaticLogin=${{ inputs.username }}
-              EOF
-            fi
-          elif [[ "${{ inputs.desktop }}" == "KDE Plasma" ]]; then
-            DM_SERVICE="sddm"
-            if [[ "${{ inputs.autologin }}" == "true" ]]; then
-              SESSION="plasma"
-              if [[ "${{ inputs.plasma_mobile }}" == "true" ]]; then
-                SESSION="plasmamobile"
+              arch-chroot /mnt useradd -m -s /bin/bash -G wheel "$USERNAME"
+              if [[ -z "$ROOTFS_PASSWORD" ]]; then
+                ROOTFS_PASSWORD="password"
               fi
-              sudo mkdir -p "$ROOTFS_MOUNT/etc/sddm.conf.d"
-              sudo tee "$ROOTFS_MOUNT/etc/sddm.conf.d/autologin.conf" << EOF
-              [Autologin]
-              User=${{ inputs.username }}
-              Session=$SESSION
-              EOF
-            fi
-          else
-            DM_SERVICE=""
-          fi
-          if [[ -n "$DM_SERVICE" ]]; then
-            sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable "$DM_SERVICE"
-            sudo arch-chroot "$ROOTFS_MOUNT" systemctl set-default graphical.target
-          fi
-          echo "✓ Display manager configured"
+              printf "%s:%s\n" "$USERNAME" "$ROOTFS_PASSWORD" | arch-chroot /mnt chpasswd
+              printf "root:%s\n" "$ROOTFS_PASSWORD" | arch-chroot /mnt chpasswd
 
+              echo "==> Enable base services"
+              arch-chroot /mnt systemctl enable NetworkManager
+              arch-chroot /mnt systemctl enable sshd
+              arch-chroot /mnt systemctl enable chronyd
+
+              if [[ "$QUIET_BOOT" == "true" ]]; then
+                arch-chroot /mnt pacman -S --noconfirm plymouth
+              fi
+
+              echo "==> Desktop environment"
+              if [[ "$DESKTOP" == "GNOME" ]]; then
+                arch-chroot /mnt pacman -S --noconfirm gnome gnome-extra firefox
+                if [[ "$AUTOLOGIN" == "true" ]]; then
+                  mkdir -p /mnt/etc/gdm
+                  cat > /mnt/etc/gdm/custom.conf << EOF
+[daemon]
+AutomaticLoginEnable=True
+AutomaticLogin=$USERNAME
+EOF
+                fi
+                arch-chroot /mnt systemctl enable gdm
+              elif [[ "$DESKTOP" == "KDE Plasma" ]]; then
+                if [[ "$PLASMA_MOBILE" == "true" ]]; then
+                  arch-chroot /mnt pacman -S --noconfirm plasma-mobile
+                else
+                  arch-chroot /mnt pacman -S --noconfirm plasma plasma-nm sddm konsole firefox dolphin kate
+                fi
+                if [[ "$QUIET_BOOT" == "true" ]]; then
+                  arch-chroot /mnt pacman -S --noconfirm plymouth-kcm breeze-plymouth
+                fi
+                if [[ "$AUTOLOGIN" == "true" ]]; then
+                  mkdir -p /mnt/etc/sddm.conf.d
+                  cat > /mnt/etc/sddm.conf.d/autologin.conf << EOF
+[Autologin]
+User=$USERNAME
+Session=plasma
+EOF
+                fi
+                arch-chroot /mnt systemctl enable sddm
+              fi
+              arch-chroot /mnt systemctl set-default graphical.target
+
+              # Enable sudo for wheel group
+              sed -i "s/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/" /mnt/etc/sudoers
+            '
+
+      # ----------------------------------------------------------------
+      # Install custom and external packages
+      # ----------------------------------------------------------------
+      - name: "Install custom packages (tar.gz)"
+        run: |
+          sudo mkdir -p "$ROOTFS_MOUNT/tmp/pkgs"
+          # Copy all custom archives
+          sudo cp fastrpc.tar.gz libssc.tar.gz iio-sensor-proxy.tar.gz \
+            sheng-sensors.tar.gz sheng-devauth.tar.gz \
+            alsa-xiaomi-sheng.tar.gz firmware-xiaomi-sheng.tar.gz \
+            external-packages.tar.gz "$ROOTFS_MOUNT/tmp/pkgs/"
+          # Copy kernel if built custom
+          if [ -f linux-xiaomi-sheng-*.tar.gz ]; then
+            sudo cp linux-xiaomi-sheng-*.tar.gz "$ROOTFS_MOUNT/tmp/pkgs/"
+          elif [ -d kernel-deb ]; then
+            # prebuilt kernel already extracted, archive it
+            sudo tar czf "$ROOTFS_MOUNT/tmp/pkgs/kernel.tar.gz" -C kernel-deb .
+          fi
+
+          # Install all archives inside arch chroot
+          sudo docker run --rm --privileged \
+            -v "$ROOTFS_MOUNT":/mnt \
+            archlinux:latest \
+            bash -c '
+              set -e
+              cd /mnt/tmp/pkgs
+              for pkg in *.tar.gz; do
+                echo "  Extracting $pkg"
+                tar xzf "$pkg" -C /mnt/
+              done
+              # Fix permissions
+              chmod +x /mnt/usr/bin/adsprpcd || true
+              chmod +x /mnt/usr/libexec/iio-sensor-proxy || true
+              chmod +x /mnt/usr/bin/monitor-sensor || true
+              chmod +x /mnt/usr/bin/ssccli || true
+              # Enable services
+              arch-chroot /mnt systemctl enable adsprpcd-sensorspd.service || true
+              # Create sheng-devauth service if not present
+              if [ -f /mnt/usr/bin/xiaomi_devauth ] && [ ! -f /mnt/usr/lib/systemd/system/sheng-devauth.service ]; then
+                cat > /mnt/usr/lib/systemd/system/sheng-devauth.service << EOF
+[Unit]
+Description=Keyboard authentication daemon
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/xiaomi_devauth
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                arch-chroot /mnt systemctl enable sheng-devauth.service
+              fi
+              # Run post-install steps for sensors
+              arch-chroot /mnt bash -c "udevadm control --reload || true; systemctl try-restart iio-sensor-proxy || true" || true
+              rm -rf /mnt/tmp/pkgs
+            '
+          echo "✓ Custom packages installed"
+
+      # ----------------------------------------------------------------
+      # Finalize fstab and cleanup
+      # ----------------------------------------------------------------
       - name: "Configure fstab"
         run: |
           PARTITION="${{ steps.partition.outputs.label }}"
           echo "PARTLABEL=$PARTITION / ext4 defaults 0 1" | sudo tee "$ROOTFS_MOUNT/etc/fstab"
-          echo "✓ fstab configured: root=PARTLABEL=$PARTITION"
+          echo "✓ fstab configured"
 
-      - name: "Clean and unmount"
+      - name: "Clean up"
         run: |
-          sudo arch-chroot "$ROOTFS_MOUNT" pacman -Scc --noconfirm
-          sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf"  # 清理自定义 DNS
+          sudo docker run --rm --privileged \
+            -v "$ROOTFS_MOUNT":/mnt \
+            archlinux:latest \
+            bash -c "arch-chroot /mnt pacman -Scc --noconfirm && rm -f /mnt/etc/resolv.conf" || true
           sudo umount "$ROOTFS_MOUNT/dev/pts" 2>/dev/null || true
           sudo umount "$ROOTFS_MOUNT/dev" 2>/dev/null || true
           sudo umount "$ROOTFS_MOUNT/proc" 2>/dev/null || true
@@ -928,7 +883,7 @@ jobs:
           echo "✓ Cleanup done"
 
       # ----------------------------------------------------------------
-      # Generate boot.img (custom kernel only)
+      # Boot image generation (unchanged)
       # ----------------------------------------------------------------
       - name: "[Custom] Generate boot.img"
         if: ${{ inputs.kernel_source == 'custom_build' }}
@@ -948,15 +903,15 @@ jobs:
             --pagesize 4096 \
             --id \
             -o boot.img
-          echo "✓ boot.img generated (cmdline: $CMDLINE)"
+          echo "✓ boot.img generated"
 
       # ----------------------------------------------------------------
-      # Upload artifacts
+      # Upload final artifacts
       # ----------------------------------------------------------------
       - name: "Upload RootFS Image"
         uses: actions/upload-artifact@v7
         with:
-          name: rootfs-arch-${{ inputs.desktop }}-${{ steps.partition.outputs.label }}
+          name: arch-rootfs-${{ inputs.desktop }}-${{ steps.partition.outputs.label }}
           path: rootfs.img
           retention-days: 14
           if-no-files-found: error
@@ -965,7 +920,7 @@ jobs:
       - name: "Upload Boot Image"
         uses: actions/upload-artifact@v7
         with:
-          name: boot-arch-${{ inputs.desktop }}-${{ steps.partition.outputs.label }}
+          name: arch-boot-${{ inputs.desktop }}-${{ steps.partition.outputs.label }}
           path: boot.img
           retention-days: 14
           if-no-files-found: warn
