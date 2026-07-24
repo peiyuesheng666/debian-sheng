@@ -1,5 +1,5 @@
 # ============================================================================
-# 🐧 Build RootFS for Xiaomi Pad 6s Pro (Sheng) – Arch Linux ARM
+# 🐧 Build RootFS for Xiaomi Pad 6s Pro (Sheng) – Arch Linux ARM (TUNA Mirror)
 # ============================================================================
 
 name: Build RootFS (Arch Linux)
@@ -724,8 +724,9 @@ jobs:
 
       - name: "Download Arch Linux ARM base tarball"
         run: |
-          wget -q http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
-          echo "✓ Arch Linux ARM tarball downloaded"
+          # 使用清华镜像加速下载
+          wget -q https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz
+          echo "✓ Arch Linux ARM tarball downloaded from TUNA mirror"
 
       - name: "Extract Arch Linux ARM base"
         run: |
@@ -738,19 +739,23 @@ jobs:
           sudo mount --bind /dev/pts "$ROOTFS_MOUNT/dev/pts"
           sudo mount -t proc proc "$ROOTFS_MOUNT/proc"
           sudo mount -t sysfs sys "$ROOTFS_MOUNT/sys"
-          # Copy host resolv.conf (will be overridden later for reliability)
-          sudo cp /etc/resolv.conf "$ROOTFS_MOUNT/etc/resolv.conf"
+          # 设置DNS（可选）
+          echo "nameserver 8.8.8.8" | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf"
+          echo "nameserver 1.1.1.1" | sudo tee -a "$ROOTFS_MOUNT/etc/resolv.conf"
           echo "✓ Virtual file systems mounted"
 
       # ----------------------------------------------------------------
-      # Install core packages and configure system
+      # Install core packages and configure system (with TUNA mirror)
       # ----------------------------------------------------------------
       - name: "Initialize pacman and install base packages"
         run: |
-          # Force reliable DNS (GitHub runner sometimes has issues with default resolv.conf)
-          echo "nameserver 8.8.8.8" | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf"
-          echo "nameserver 1.1.1.1" | sudo tee -a "$ROOTFS_MOUNT/etc/resolv.conf"
+          # 替换镜像源为清华大学 TUNA
+          sudo tee "$ROOTFS_MOUNT/etc/pacman.d/mirrorlist" << 'EOF'
+          ## 清华大学 TUNA 镜像源
+          Server = https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/$arch/$repo
+          EOF
 
+          # 可选：也替换 pacman.conf 中的默认服务器（但 mirrorlist 已足够）
           sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --init
           sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --populate archlinuxarm
           sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman -Syu --noconfirm
