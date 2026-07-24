@@ -738,6 +738,7 @@ jobs:
           sudo mount --bind /dev/pts "$ROOTFS_MOUNT/dev/pts"
           sudo mount -t proc proc "$ROOTFS_MOUNT/proc"
           sudo mount -t sysfs sys "$ROOTFS_MOUNT/sys"
+          # Copy host resolv.conf (will be overridden later for reliability)
           sudo cp /etc/resolv.conf "$ROOTFS_MOUNT/etc/resolv.conf"
           echo "✓ Virtual file systems mounted"
 
@@ -746,6 +747,10 @@ jobs:
       # ----------------------------------------------------------------
       - name: "Initialize pacman and install base packages"
         run: |
+          # Force reliable DNS (GitHub runner sometimes has issues with default resolv.conf)
+          echo "nameserver 8.8.8.8" | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf"
+          echo "nameserver 1.1.1.1" | sudo tee -a "$ROOTFS_MOUNT/etc/resolv.conf"
+
           sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --init
           sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --populate archlinuxarm
           sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman -Syu --noconfirm
