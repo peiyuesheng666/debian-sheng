@@ -1,5 +1,6 @@
 # ============================================================================
-# 🐧 Build RootFS for Xiaomi Pad 6s Pro (Sheng) – Arch Linux ARM (USTC Mirror)
+# 🐧 Build RootFS for Xiaomi Pad 6s Pro (Sheng) – Arch Linux ARM
+# 使用官方源 + 多镜像重试，确保基础系统下载成功
 # ============================================================================
 
 name: Build RootFS (Arch Linux)
@@ -722,45 +723,64 @@ jobs:
           sudo mount -o loop rootfs.img "$ROOTFS_MOUNT"
           echo "✓ RootFS image mounted at $ROOTFS_MOUNT"
 
-      - name: "Download Arch Linux ARM base tarball (USTC mirror)"
+      - name: "Download Arch Linux ARM base tarball (official + mirrors)"
         run: |
-          wget -q https://mirrors.ustc.edu.cn/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz
-          echo "✓ Arch Linux ARM tarball downloaded from USTC mirror"
+          # 优先使用官方源，备用国内镜像
+          MIRRORS=(
+            "http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
+            "https://de3.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz"
+            "https://mirrors.ustc.edu.cn/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
+            "https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
+            "https://mirrors.aliyun.com/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz"
+          )
+          for MIRROR in "${MIRRORS[@]}"; do
+            echo "Trying to download from $MIRROR ..."
+            if wget -q --timeout=30 --tries=3 "$MIRROR"; then
+              echo "✓ Successfully downloaded from $MIRROR"
+              exit 0
+            else
+              echo "❌ Failed from $MIRROR, trying next..."
+            fi
+          done
+          echo "Error: All mirrors failed to download Arch Linux ARM tarball."
+          exit 1
 
       - name: "Extract Arch Linux ARM base"
         run: |
           sudo tar -xzf ArchLinuxARM-aarch64-latest.tar.gz -C "$ROOTFS_MOUNT"
           echo "✓ Base system extracted"
 
-      - name: "Mount Virtual File Systems and Bind resolv.conf"
+      - name: "Mount Virtual File Systems and set DNS"
         run: |
           sudo mount --bind /dev "$ROOTFS_MOUNT/dev"
           sudo mount --bind /dev/pts "$ROOTFS_MOUNT/dev/pts"
           sudo mount -t proc proc "$ROOTFS_MOUNT/proc"
           sudo mount -t sysfs sys "$ROOTFS_MOUNT/sys"
-          # Bind mount host's resolv.conf to ensure DNS works inside chroot
-          sudo mount --bind /etc/resolv.conf "$ROOTFS_MOUNT/etc/resolv.conf"
-          echo "✓ Virtual file systems mounted and resolv.conf bound"
+          # 强制使用公共 DNS（避免 systemd-resolved 127.0.0.53 问题）
+          echo "nameserver 8.8.8.8" | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf"
+          echo "nameserver 1.1.1.1" | sudo tee -a "$ROOTFS_MOUNT/etc/resolv.conf"
+          echo "✓ Virtual file systems mounted and DNS set"
 
       # ----------------------------------------------------------------
-      # Install core packages and configure system (with USTC mirror)
+      # Install core packages and configure system
       # ----------------------------------------------------------------
       - name: "Initialize pacman and install base packages"
         run: |
-          # 设置中科大镜像源
+          # 设置中科大镜像源（也可改为官方，但国内访问慢）
           sudo tee "$ROOTFS_MOUNT/etc/pacman.d/mirrorlist" << 'EOF'
           ## 中国科学技术大学镜像
           Server = https://mirrors.ustc.edu.cn/archlinuxarm/$arch/$repo
           EOF
 
-          # 测试网络连通性（调试）
-          echo "=== Testing network inside chroot ==="
-          sudo arch-chroot "$ROOTFS_MOUNT" /bin/bash -c "ping -c 1 8.8.8.8 || true"
-          sudo arch-chroot "$ROOTFS_MOUNT" /bin/bash -c "getent hosts mirrors.ustc.edu.cn || true"
+          # 测试网络（调试用）
+          echo "=== Testing network connectivity ==="
+          sudo arch-chroot "$ROOTFS_MOUNT" ping -c 1 8.8.8.8 || echo "Ping failed, but continuing..."
 
-          # 使用 arch-chroot 执行 pacman 命令
+          # 初始化 pacman
           sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --init
           sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --populate archlinuxarm
+
+          # 更新并安装基础包
           sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -Syu --noconfirm
           sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
             base-devel networkmanager openssh sudo vim wget \
@@ -883,7 +903,7 @@ jobs:
       - name: "Clean and unmount"
         run: |
           sudo arch-chroot "$ROOTFS_MOUNT" pacman -Scc --noconfirm
-          sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf"  # 移除绑定挂载的残留
+          sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf"  # 清理自定义 DNS
           sudo umount "$ROOTFS_MOUNT/dev/pts" 2>/dev/null || true
           sudo umount "$ROOTFS_MOUNT/dev" 2>/dev/null || true
           sudo umount "$ROOTFS_MOUNT/proc" 2>/dev/null || true
