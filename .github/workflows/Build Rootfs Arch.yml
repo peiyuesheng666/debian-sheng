@@ -1,5 +1,5 @@
 # ============================================================================
-# 🐧 Build RootFS for Xiaomi Pad 6s Pro (Sheng) – Arch Linux ARM (TUNA Mirror)
+# 🐧 Build RootFS for Xiaomi Pad 6s Pro (Sheng) – Arch Linux ARM (USTC Mirror)
 # ============================================================================
 
 name: Build RootFS (Arch Linux)
@@ -722,44 +722,47 @@ jobs:
           sudo mount -o loop rootfs.img "$ROOTFS_MOUNT"
           echo "✓ RootFS image mounted at $ROOTFS_MOUNT"
 
-      - name: "Download Arch Linux ARM base tarball"
+      - name: "Download Arch Linux ARM base tarball (USTC mirror)"
         run: |
-          # 使用清华镜像加速下载
-          wget -q https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz
-          echo "✓ Arch Linux ARM tarball downloaded from TUNA mirror"
+          wget -q https://mirrors.ustc.edu.cn/archlinuxarm/os/ArchLinuxARM-aarch64-latest.tar.gz
+          echo "✓ Arch Linux ARM tarball downloaded from USTC mirror"
 
       - name: "Extract Arch Linux ARM base"
         run: |
           sudo tar -xzf ArchLinuxARM-aarch64-latest.tar.gz -C "$ROOTFS_MOUNT"
           echo "✓ Base system extracted"
 
-      - name: "Mount Virtual File Systems"
+      - name: "Mount Virtual File Systems and Bind resolv.conf"
         run: |
           sudo mount --bind /dev "$ROOTFS_MOUNT/dev"
           sudo mount --bind /dev/pts "$ROOTFS_MOUNT/dev/pts"
           sudo mount -t proc proc "$ROOTFS_MOUNT/proc"
           sudo mount -t sysfs sys "$ROOTFS_MOUNT/sys"
-          # 设置DNS（可选）
-          echo "nameserver 8.8.8.8" | sudo tee "$ROOTFS_MOUNT/etc/resolv.conf"
-          echo "nameserver 1.1.1.1" | sudo tee -a "$ROOTFS_MOUNT/etc/resolv.conf"
-          echo "✓ Virtual file systems mounted"
+          # Bind mount host's resolv.conf to ensure DNS works inside chroot
+          sudo mount --bind /etc/resolv.conf "$ROOTFS_MOUNT/etc/resolv.conf"
+          echo "✓ Virtual file systems mounted and resolv.conf bound"
 
       # ----------------------------------------------------------------
-      # Install core packages and configure system (with TUNA mirror)
+      # Install core packages and configure system (with USTC mirror)
       # ----------------------------------------------------------------
       - name: "Initialize pacman and install base packages"
         run: |
-          # 替换镜像源为清华大学 TUNA
+          # 设置中科大镜像源
           sudo tee "$ROOTFS_MOUNT/etc/pacman.d/mirrorlist" << 'EOF'
-          ## 清华大学 TUNA 镜像源
-          Server = https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm/$arch/$repo
+          ## 中国科学技术大学镜像
+          Server = https://mirrors.ustc.edu.cn/archlinuxarm/$arch/$repo
           EOF
 
-          # 可选：也替换 pacman.conf 中的默认服务器（但 mirrorlist 已足够）
-          sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --init
-          sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --populate archlinuxarm
-          sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman -Syu --noconfirm
-          sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
+          # 测试网络连通性（调试）
+          echo "=== Testing network inside chroot ==="
+          sudo arch-chroot "$ROOTFS_MOUNT" /bin/bash -c "ping -c 1 8.8.8.8 || true"
+          sudo arch-chroot "$ROOTFS_MOUNT" /bin/bash -c "getent hosts mirrors.ustc.edu.cn || true"
+
+          # 使用 arch-chroot 执行 pacman 命令
+          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --init
+          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman-key --populate archlinuxarm
+          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -Syu --noconfirm
+          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
             base-devel networkmanager openssh sudo vim wget \
             chrony iw wireless-regdb \
             libglib2 libprotobuf-c libqmi-glib libmbim-glib \
@@ -769,7 +772,7 @@ jobs:
       - name: "Install GNOME"
         if: ${{ inputs.desktop == 'GNOME' }}
         run: |
-          sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
+          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
             gnome gnome-terminal firefox gdm
           echo "✓ GNOME installed"
 
@@ -781,14 +784,14 @@ jobs:
           else
             PLASMA_PKG="plasma"
           fi
-          sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
+          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm \
             $PLASMA_PKG plasma-nm sddm konsole firefox dolphin kate
           echo "✓ KDE Plasma installed"
 
       - name: "Install Plymouth (quiet boot)"
         if: ${{ steps.partition.outputs.quiet_boot_enabled == 'true' }}
         run: |
-          sudo chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm plymouth
+          sudo arch-chroot "$ROOTFS_MOUNT" /usr/bin/pacman -S --noconfirm plymouth
           echo "✓ Plymouth installed"
 
       # ----------------------------------------------------------------
@@ -806,10 +809,10 @@ jobs:
       # ----------------------------------------------------------------
       - name: "Enable services"
         run: |
-          sudo chroot "$ROOTFS_MOUNT" systemctl enable NetworkManager
-          sudo chroot "$ROOTFS_MOUNT" systemctl enable sshd
-          sudo chroot "$ROOTFS_MOUNT" systemctl enable chronyd
-          sudo chroot "$ROOTFS_MOUNT" systemctl enable adsprpcd-sensorspd.service || true
+          sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable NetworkManager
+          sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable sshd
+          sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable chronyd
+          sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable adsprpcd-sensorspd.service || true
           echo "✓ Services enabled"
 
       - name: "Set hostname"
@@ -829,9 +832,9 @@ jobs:
           else
             echo "::add-mask::$ROOTFS_PASSWORD"
           fi
-          sudo chroot "$ROOTFS_MOUNT" useradd -m -s /bin/bash -G wheel "${{ inputs.username }}"
-          printf '%s:%s\n' "${{ inputs.username }}" "$ROOTFS_PASSWORD" | sudo chroot "$ROOTFS_MOUNT" chpasswd
-          printf 'root:%s\n' "$ROOTFS_PASSWORD" | sudo chroot "$ROOTFS_MOUNT" chpasswd
+          sudo arch-chroot "$ROOTFS_MOUNT" useradd -m -s /bin/bash -G wheel "${{ inputs.username }}"
+          printf '%s:%s\n' "${{ inputs.username }}" "$ROOTFS_PASSWORD" | sudo arch-chroot "$ROOTFS_MOUNT" chpasswd
+          printf 'root:%s\n' "$ROOTFS_PASSWORD" | sudo arch-chroot "$ROOTFS_MOUNT" chpasswd
           echo "%wheel ALL=(ALL) ALL" | sudo tee -a "$ROOTFS_MOUNT/etc/sudoers.d/wheel"
           echo "✓ User created and passwords set"
 
@@ -866,8 +869,8 @@ jobs:
             DM_SERVICE=""
           fi
           if [[ -n "$DM_SERVICE" ]]; then
-            sudo chroot "$ROOTFS_MOUNT" systemctl enable "$DM_SERVICE"
-            sudo chroot "$ROOTFS_MOUNT" systemctl set-default graphical.target
+            sudo arch-chroot "$ROOTFS_MOUNT" systemctl enable "$DM_SERVICE"
+            sudo arch-chroot "$ROOTFS_MOUNT" systemctl set-default graphical.target
           fi
           echo "✓ Display manager configured"
 
@@ -879,8 +882,8 @@ jobs:
 
       - name: "Clean and unmount"
         run: |
-          sudo chroot "$ROOTFS_MOUNT" pacman -Scc --noconfirm
-          sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf"
+          sudo arch-chroot "$ROOTFS_MOUNT" pacman -Scc --noconfirm
+          sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf"  # 移除绑定挂载的残留
           sudo umount "$ROOTFS_MOUNT/dev/pts" 2>/dev/null || true
           sudo umount "$ROOTFS_MOUNT/dev" 2>/dev/null || true
           sudo umount "$ROOTFS_MOUNT/proc" 2>/dev/null || true
